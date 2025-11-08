@@ -1,6 +1,6 @@
 # Vending Machine Communication Handler
 
-**Vending Machine Communication Handler** là dự án giúp giao tiếp với máy bán hàng tự động (VMC) qua cổng COM. Hệ thống hỗ trợ:  
+**Vending Machine Communication Handler** là dự án giúp giao tiếp với máy bán hàng tự động (VMC) qua cổng COM hoặc máy VMC ảo. Hệ thống hỗ trợ:  
 - Gửi lệnh tới máy VMC  
 - Nhận dữ liệu trạng thái kênh, báo cáo xuất hàng  
 - Logging và debug trực quan  
