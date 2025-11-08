@@ -1,6 +1,7 @@
-﻿<Window x:Class="VendingMachineTest.MainWindow"
+﻿<Window
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:av="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="av" x:Class="VendingMachineTest.MainWindow"
         Title="Vending Machine Tester" Height="650" Width="900"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         WindowState="Maximized">
@@ -82,7 +83,7 @@
                                 FontWeight="SemiBold" IsEnabled="False"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Row, Column, Quantity:" Margin="0 0 20 0"/> 
+                        <TextBlock Text="Row, Column, Quantity:" Margin="0 0 20 0"/>
                         <TextBox x:Name="MachineIDD" Height="32" Width="150"  Margin="0 0 5 0"/>
                         <Button x:Name="BtnSendd" Content="Send"
                                 Width="75" Height="32" Margin="0 0 10 0"
@@ -123,15 +124,15 @@
 
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="100"/>
-                            <DataGridTextColumn Header="ID Kênh Hàng" Binding="{Binding ChannelID}" Width="200"/>
-                            <DataGridTextColumn Header="Trạng thái truy vấn" Binding="{Binding CheckStatus}" Width="200"/>
-                            <DataGridTextColumn Header="Trạng thái xuất hàng" Binding="{Binding ReleaseStatus}" Width="200"/>
+                            <DataGridTextColumn Header="ID Kênh Hàng" Binding="{Binding ChannelID}" Width="100"/>
+                            <DataGridTextColumn Header="Action" Binding="{Binding CheckStatus}" Width="200"/>
+                            <DataGridTextColumn Header="Note" Binding="{Binding ReleaseStatus}" Width="400"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </GroupBox>
             </Grid>
         </GroupBox>
         <Button Grid.Row="3" Width="100" Content="Clear Logs" HorizontalAlignment="Right"
-                Margin="0 0 25 0" Click="Button_Click"></Button>
+                Margin="0 0 25 0" Click="Button_Click"/>
     </Grid>
 </Window>

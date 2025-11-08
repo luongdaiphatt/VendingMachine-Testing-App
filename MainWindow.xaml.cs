@@ -40,8 +40,9 @@ namespace VendingMachineTest
             var ports = SerialPort.GetPortNames();
             ComboPorts.ItemsSource = ports;
             if (ports.Length > 0) ComboPorts.SelectedIndex = 0;
-           
-            tbUrl.Text = "http://localhost:5244/vmcHub";
+
+            //tbUrl.Text = "http://localhost:5244/vmcHub";
+            tbUrl.Text = "http://localhost:5000/vmcHub";
 
             BtnConnect.Click += BtnConnect_Click;
             BtnDisconnect.Click += BtnDisconnect_Click;
@@ -84,7 +85,13 @@ namespace VendingMachineTest
 
             bool ok = await _portService.ConnectAsync();
             if (ok)
+            {
                 SetComConnectionStatus(true);
+
+                _vmcHandler = new VmcCommHandler(_portService, this);
+                _vmcHandler.Log += OnLog;
+                AddLog("portName connected.");
+            }
         }
 
         private async void BtnDisconnect_Click(object sender, RoutedEventArgs e)
@@ -113,7 +120,7 @@ namespace VendingMachineTest
             var items = ParseMultiInput(MachineID.Text);
             if (items.Count == 0)
             {
-                AddLog("Invalid input format");
+                AddLog("Wrong format");
                 return;
             }
 

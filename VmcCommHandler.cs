@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using VendingMachineTest.Services;
+using static VendingMachineTest.Services.VmcProtocol;
 
 namespace VendingMachineTest
 {
@@ -15,6 +16,7 @@ namespace VendingMachineTest
         private VmcProtocol.Packet _currentCommand;
         private bool _waitingAckFromVmc;
         private bool _waitingDataFromVmc;
+        private bool _isCollecting = false;
 
         private readonly MainWindow _mainWindow;
 
@@ -85,14 +87,22 @@ namespace VendingMachineTest
 
         private async Task HandlePoll()
         {
+            if (!_isCollecting)
+            {
+                _isCollecting = true;
+                await CollectItem();
+            }
+        }
+
+        private async Task CollectItem()
+        {
             VmcProtocol.Packet commandToSend = null;
             bool shouldSendCommand = false;
-
             lock (_lock)
             {
                 if (_waitingAckFromVmc || _waitingDataFromVmc)
                 {
-                    
+
                 }
                 else
                 {
@@ -103,11 +113,19 @@ namespace VendingMachineTest
                         _waitingAckFromVmc = true;
                         shouldSendCommand = true;
                     }
+                    else
+                    {
+                        _isCollecting = false;
+                    }
                 }
             }
 
             if (shouldSendCommand && commandToSend != null)
             {
+                byte row = commandToSend.Text[0];
+                byte col = commandToSend.Text[1];
+                _mainWindow.AddOperationLog($"Row {row}, Col {col}", "Start Process", "");
+                _mainWindow.AddOperationLog("", $"Check Status", $"Send: {BitConverter.ToString(commandToSend.ToBytes())}");
                 await SendPacket(commandToSend);
                 Log?.Invoke($"Sent CMD 0x{commandToSend.Command:X2} (PackNO:{commandToSend.PackNO})");
             }
@@ -158,7 +176,7 @@ namespace VendingMachineTest
             };
 
             Log?.Invoke($"CMD_TYPE_02: Row={row}, Col={col} - {statusText}");
-            _mainWindow.AddOperationLog($"Row {row}, Col {col}", statusText, "-");
+            _mainWindow.AddOperationLog($"Row {row}, Col {col}", statusText, $"Receive: {BitConverter.ToString(packet.ToBytes())}");
 
             await SendAck();
 
@@ -171,21 +189,24 @@ namespace VendingMachineTest
                 {
                     currentPackNo = _currentCommand?.PackNO ?? _packNo;
 
-                    _commandQueue.TryDequeue(out _);
+                    //_commandQueue.TryDequeue(out _);
                     _currentCommand = null;
                     _waitingAckFromVmc = false;
                     _waitingDataFromVmc = false;
                 }
                 byte[] confirmData = { 0x01, 0x00, row, col };
                 var packet06 = VmcProtocol.CreateCommandPacket(VmcProtocol.CMD_TYPE_06, currentPackNo, confirmData);
-                _commandQueue.Enqueue(packet06);
+                //_commandQueue.Enqueue(packet06);
 
-                Log?.Invoke($"Queued CMD_TYPE_06 (PackNO:{currentPackNo}) Data:{BitConverter.ToString(confirmData)}");
+                //Log?.Invoke($"Queued CMD_TYPE_06 (PackNO:{currentPackNo}) Data:{BitConverter.ToString(confirmData)}");
+                _mainWindow.AddOperationLog("", "Collect", $"Send: {BitConverter.ToString(packet06.ToBytes())}");
+                await SendPacket(packet06);
+                Log?.Invoke($"Sent CMD 0x{packet06.Command:X2} (PackNO:{packet06.PackNO})");
                 return;
             }
-
             Log?.Invoke($"Error (status=0x{status:X2})");
-            CompleteCurrentCommand();
+            CompleteCurrentCommand(); 
+            await CollectItem();
         }
 
         private async Task HandleDispenseReport(VmcProtocol.Packet packet)
@@ -213,7 +234,7 @@ namespace VendingMachineTest
             };
 
             Log?.Invoke($"CMD_TYPE_04: Row={row}, Col={col} - {statusText}");
-            _mainWindow.AddOperationLog($"Row {row}, Col {col}", "-", statusText);
+            _mainWindow.AddOperationLog($"Row {row}, Col {col}", statusText, $"Receive: {BitConverter.ToString(packet.ToBytes())}");
             if(status == 0x01)
             {
                 Log?.Invoke($"CMD_TYPE_04: Đang xuất hàng ...");
@@ -223,8 +244,10 @@ namespace VendingMachineTest
             else
             {
                 await SendAck();
+                _mainWindow.AddOperationLog($"Row {row}, Col {col}", "End Process", "");
                 CompleteCurrentCommand();
                 Log?.Invoke($"Successful");
+                await CollectItem();
                 return;
             }
         }
