@@ -1,6 +1,5 @@
 ﻿using System;
 using System.IO.Ports;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -9,113 +8,71 @@ namespace VendingMachineTest.Services
     public class ComPortService : ICommService, IDisposable
     {
         private SerialPort _serialPort;
-        private CancellationTokenSource _cts;
         private readonly object _lock = new();
 
-        private readonly string _portName;
-        private readonly int _baudRate;
+        // --- ACK logic ---
+        private readonly int _retryCount = 5;
+        private readonly int _ackTimeout = 300; // ms
+        private readonly ManualResetEventSlim _ackReceived = new(false);
+        private byte[]? _lastResponse;
 
         public event Action<byte[]> DataReceived;
         public event Action<string> Log;
 
-        public bool IsConnected => _serialPort != null && _serialPort.IsOpen;
+        public bool IsConnected => _serialPort?.IsOpen ?? false;
 
         public ComPortService(string portName, int baudRate = 57600)
         {
-            _portName = portName;
-            _baudRate = baudRate;
+            _serialPort = new SerialPort(portName, baudRate, Parity.None, 8, StopBits.One)
+            {
+                ReadTimeout = 500,
+                WriteTimeout = 500
+            };
+            _serialPort.DataReceived += SerialPort_DataReceived;
         }
 
-        public async Task<bool> ConnectAsync()
+        public Task<bool> ConnectAsync()
         {
             try
             {
-                if (IsConnected)
-                    await DisconnectAsync();
+                if (!_serialPort.IsOpen)
+                    _serialPort.Open();
 
-                _serialPort = new SerialPort(_portName, _baudRate, Parity.None, 8, StopBits.One)
-                {
-                    ReadTimeout = 500,
-                    WriteTimeout = 500
-                };
-
-                _serialPort.Open();
-                _cts = new CancellationTokenSource();
-
-                _ = Task.Run(() => ReadLoopAsync(_cts.Token));
-
-                Log?.Invoke($"[COM] Connected {_portName} @ {_baudRate}");
-                return true;
+                Log?.Invoke($"[COM] Connected {_serialPort.PortName} @ {_serialPort.BaudRate}");
+                return Task.FromResult(true);
             }
             catch (Exception ex)
             {
                 Log?.Invoke($"[COM] Connect failed: {ex.Message}");
-                return false;
+                return Task.FromResult(false);
             }
         }
 
-        private async Task ReadLoopAsync(CancellationToken token)
+        public async Task DisconnectAsync()
         {
-            byte[] buffer = new byte[256];
-
-            while (!token.IsCancellationRequested)
+            try
             {
-                try
-                {
-                    if (_serialPort == null || !_serialPort.IsOpen)
-                    {
-                        await Task.Delay(100, token);
-                        continue;
-                    }
+                if (_serialPort != null && _serialPort.IsOpen)
+                    _serialPort.Close();
 
-                    int bytesToRead = _serialPort.BytesToRead;
-                    if (bytesToRead > 0)
-                    {
-                        int len = _serialPort.Read(buffer, 0, Math.Min(bytesToRead, buffer.Length));
-                        if (len > 0)
-                        {
-                            byte[] data = new byte[len];
-                            Array.Copy(buffer, 0, data, 0, len);
-
-                            Log?.Invoke($"[COM RX] {BitConverter.ToString(data)}");
-                            DataReceived?.Invoke(data);
-                        }
-                    }
-
-                    await Task.Delay(10, token); // tránh CPU 100%
-                }
-                catch (TimeoutException)
-                {
-                    // không sao, bỏ qua
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log?.Invoke($"[COM] Read error: {ex.Message}");
-                    await Task.Delay(200);
-                }
+                Log?.Invoke("[COM] Disconnected.");
+                await Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                Log?.Invoke($"[COM] Disconnect error: {ex.Message}");
             }
         }
-
         public async Task SendAsync(byte[] data)
         {
-            if (data == null || data.Length == 0) return;
+            if (!IsConnected || data == null || data.Length == 0) return;
 
             try
             {
                 lock (_lock)
                 {
-                    if (_serialPort != null && _serialPort.IsOpen)
-                    {
-                        _serialPort.Write(data, 0, data.Length);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException("SerialPort is not open");
-                    }
+                    _serialPort.DiscardOutBuffer();
+                    _serialPort.Write(data, 0, data.Length);
                 }
 
                 Log?.Invoke($"[COM TX] {BitConverter.ToString(data)}");
@@ -126,35 +83,86 @@ namespace VendingMachineTest.Services
                 Log?.Invoke($"[COM] Send error: {ex.Message}");
             }
         }
+        public async Task<bool> SendCommandAsync(byte[] command)
+        {
+            if (!IsConnected)
+            {
+                Log?.Invoke("[COM] COM chưa kết nối.");
+                return false;
+            }
 
-        public async Task DisconnectAsync()
+            string hexCommand = BitConverter.ToString(command).Replace("-", " ");
+            Log?.Invoke($"[COM TX] Sending command: {hexCommand}");
+
+            for (int attempt = 1; attempt <= _retryCount; attempt++)
+            {
+                try
+                {
+                    lock (_lock)
+                    {
+                        _serialPort.DiscardInBuffer();
+                        _serialPort.DiscardOutBuffer();
+                        _serialPort.Write(command, 0, command.Length);
+                    }
+
+                    _ackReceived.Reset();
+                    Log?.Invoke($"[{attempt}/{_retryCount}] Waiting for ACK...");
+                    bool gotAck = await Task.Run(() => _ackReceived.Wait(_ackTimeout));
+
+                    if (gotAck)
+                    {
+                        Log?.Invoke("ACK received.");
+                        return true;
+                    }
+                    else
+                    {
+                        Log?.Invoke("No ACK, retrying...");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log?.Invoke($"Error sending command: {ex.Message}");
+                }
+
+                await Task.Delay(200);
+            }
+
+            Log?.Invoke("[COM] Send command failed after retries.");
+            return false;
+        }
+
+        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             try
             {
-                _cts?.Cancel();
+                Thread.Sleep(30); 
+                int length = _serialPort.BytesToRead;
+                if (length == 0) return;
 
-                if (_serialPort != null)
-                {
-                    if (_serialPort.IsOpen)
-                        _serialPort.Close();
+                byte[] buffer = new byte[length];
+                _serialPort.Read(buffer, 0, length);
 
-                    _serialPort.Dispose();
-                    _serialPort = null;
-                }
+                _lastResponse = buffer;
+                DataReceived?.Invoke(buffer);
 
-                Log?.Invoke("[COM] Disconnected.");
-                await Task.CompletedTask;
+                string hex = BitConverter.ToString(buffer).Replace("-", " ");
+                Log?.Invoke($"[COM RX] {hex}");
+
+                // Kiểm tra ACK (0x06)
+                if (buffer.Length > 0 && buffer[0] == 0x06)
+                    _ackReceived.Set();
             }
             catch (Exception ex)
             {
-                Log?.Invoke($"[COM] Disconnect error: {ex.Message}");
+                Log?.Invoke($"[COM] DataReceived error: {ex.Message}");
             }
         }
 
+        public byte[]? GetLastResponse() => _lastResponse;
+
         public void Dispose()
         {
-            _ = DisconnectAsync();
-            _cts?.Dispose();
+            _serialPort?.Dispose();
         }
     }
 }
